@@ -6,6 +6,11 @@ compose_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/com
 client_compose_file="${compose_dir}/client/client.yaml"
 servers_compose_file="${compose_dir}/server/test-onboarding.yaml"
 
+coverage_dockerfile_server="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/coverage/Dockerfile.server"
+coverage_dockerfile_client="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/coverage/Dockerfile.client"
+export coverage_dockerfile_server
+export coverage_dockerfile_client
+
 # Export base_dir explicitly for Docker Compose
 export base_dir
 
@@ -21,6 +26,39 @@ export container_user
 container_working_dir="/workdir"
 export container_working_dir
 
+server_coverage_dir="${COVERAGE_ROOT:+${COVERAGE_ROOT}/raw/server}"
+client_coverage_dir="${COVERAGE_ROOT:+${COVERAGE_ROOT}/raw/client}"
+export server_coverage_dir
+export client_coverage_dir
+
+server_service_names=""
+
+# Compute the docker compose --file arguments for the servers compose file(s),
+# lazily, at call time. This must NOT be computed once at source time because
+# many test scripts override 'servers_compose_file' after sourcing this file.
+server_compose_args() {
+  local args=("--file" "${servers_compose_file}")
+  coverage_enabled && args+=("--file" "${compose_dir}/coverage-overlay-server.yaml")
+  printf '%s\n' "${args[@]}"
+}
+
+# Same as 'server_compose_args', but for the client compose file(s).
+client_compose_args() {
+  local args=("--file" "${client_compose_file}")
+  coverage_enabled && args+=("--file" "${compose_dir}/coverage-overlay-client.yaml")
+  printf '%s\n' "${args[@]}"
+}
+
+apply_server_coverage_overlay() {
+  coverage_enabled || return 0
+  mkdir -p "${server_coverage_dir}"
+}
+
+apply_client_coverage_overlay() {
+  coverage_enabled || return 0
+  mkdir -p "${client_coverage_dir}"
+}
+
 curl() {
   docker run --user "${container_user}" --network fdo --volume "${PWD}:${PWD}:z" --rm curlimages/curl "$@"
 }
@@ -32,7 +70,10 @@ get_real_ip() {
 
 install_client() {
   fetch_client_repo
-  docker compose --file "${client_compose_file}" build -q go-fdo-client
+  apply_client_coverage_overlay
+  local client_compose_files=()
+  mapfile -t client_compose_files < <(client_compose_args)
+  docker compose "${client_compose_files[@]}" build -q go-fdo-client
 }
 
 uninstall_client() {
@@ -48,8 +89,10 @@ run_go_fdo_client() {
     # Replace base_dir with container_working_dir in paths
     args+=("${arg//$base_dir/$container_working_dir}")
   done
+  local client_compose_files=()
+  mapfile -t client_compose_files < <(client_compose_args)
   local exit_code=0
-  timeout "${client_timeout}" docker compose --file "${client_compose_file}" run --rm go-fdo-client "${args[@]}" || exit_code=$?
+  timeout "${client_timeout}" docker compose "${client_compose_files[@]}" run --rm go-fdo-client "${args[@]}" || exit_code=$?
   if [[ ${exit_code} -ne 0 ]]; then
     log_warn "Command timed out (${exit_code}): 'go-fdo-client $*'"
   fi
@@ -58,35 +101,53 @@ run_go_fdo_client() {
 
 install_server() {
   fetch_server_repo
-  docker compose --file "${servers_compose_file}" build -q go-fdo-server
+  apply_server_coverage_overlay
+  local server_compose_files=()
+  mapfile -t server_compose_files < <(server_compose_args)
+  docker compose "${server_compose_files[@]}" build -q go-fdo-server
+  server_service_names="$(docker compose --file "${servers_compose_file}" config --services)"
 }
 
 uninstall_server() {
-  docker compose --file "${servers_compose_file}" down
+  local server_compose_files=()
+  mapfile -t server_compose_files < <(server_compose_args)
+  docker compose "${server_compose_files[@]}" down
 }
 
 start_service() {
   local service_name=$1
-  docker compose --file "${servers_compose_file}" up -d "${service_name}"
+  local server_compose_files=()
+  mapfile -t server_compose_files < <(server_compose_args)
+  docker compose "${server_compose_files[@]}" up -d "${service_name}"
 }
 
 start_services() {
   log_info "Starting services"
-  docker compose --file "${servers_compose_file}" up -d
+  local server_compose_files=()
+  mapfile -t server_compose_files < <(server_compose_args)
+  # shellcheck disable=SC2086
+  docker compose "${server_compose_files[@]}" up -d ${server_service_names}
 }
 
 stop_service() {
   local service_name=$1
-  docker compose --file "${servers_compose_file}" stop "${service_name}"
+  local server_compose_files=()
+  mapfile -t server_compose_files < <(server_compose_args)
+  docker compose "${server_compose_files[@]}" stop "${service_name}"
 }
 
 stop_services() {
-  docker compose --file "${servers_compose_file}" stop
+  local server_compose_files=()
+  mapfile -t server_compose_files < <(server_compose_args)
+  # shellcheck disable=SC2086
+  docker compose "${server_compose_files[@]}" stop ${server_service_names}
 }
 
 get_service_logs() {
   local service=$1
-  docker compose --file "${servers_compose_file}" logs --no-log-prefix "${service}"
+  local server_compose_files=()
+  mapfile -t server_compose_files < <(server_compose_args)
+  docker compose "${server_compose_files[@]}" logs --no-log-prefix "${service}"
 }
 
 get_logs() {

@@ -1,0 +1,20 @@
+# Coverage-instrumented build of go-fdo-client, used only by go-fdo-ci's
+# e2e coverage overlay. Mirrors go-fdo-client/Dockerfile's stages, but
+# adds the GOFLAGS env var for enabling coverage instrumentation.
+FROM golang:1.26-alpine AS builder
+
+ARG GOFLAGS=""
+ENV GOFLAGS=${GOFLAGS}
+
+WORKDIR /go/src/app
+COPY . .
+
+RUN apk add make
+RUN make build
+RUN install -D -m 755 go-fdo-client /go/bin/
+
+FROM gcr.io/distroless/static-debian12
+
+COPY --from=builder /go/bin/go-fdo-client /usr/bin/go-fdo-client
+
+ENTRYPOINT ["go-fdo-client"]

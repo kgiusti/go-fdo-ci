@@ -51,6 +51,9 @@ jobs:
     name: "${{ matrix.type }}: ${{ matrix.name }}"
     runs-on: ubuntu-latest
     needs: setup
+    env:
+      COVERAGE_ENABLED: "1"
+      COVERAGE_ROOT: ${{ github.workspace }}/test-coverage
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -96,3 +99,82 @@ jobs:
         run: |
           source ${{ matrix.dir }}/${{ matrix.test }}
           cleanup
+
+      - name: Upload raw coverage data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-raw-${{ matrix.type }}-${{ matrix.name }}
+          path: ${{ env.COVERAGE_ROOT }}/raw
+          if-no-files-found: warn
+
+  coverage-report:
+    name: "Coverage report"
+    runs-on: ubuntu-latest
+    needs: e2e
+    if: always()
+    steps:
+      - name: Install golang
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26"
+
+      - name: Check out go-fdo-ci
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: fido-device-onboard/go-fdo-ci
+          ref: ${{ inputs.go-fdo-ci-ref || github.ref }}
+
+      - name: Check out go-fdo-server
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: fido-device-onboard/go-fdo-server
+          ref: ${{ inputs.go-fdo-server-ref || 'main' }}
+          path: src/server
+
+      - name: Check out go-fdo-client
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: fido-device-onboard/go-fdo-client
+          ref: ${{ inputs.go-fdo-client-ref || 'main' }}
+          path: src/client
+
+      - name: Download all raw coverage artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-raw-*
+          path: test-coverage/downloaded
+          merge-multiple: false
+
+      - name: Merge downloaded coverage into shared raw dirs
+        run: |
+          mkdir -p test-coverage/raw/server test-coverage/raw/client
+          find test-coverage/downloaded -mindepth 1 -maxdepth 1 -type d | while read -r artifact_dir; do
+            artifact_name="$(basename "$artifact_dir")"
+            if [ -d "$artifact_dir/server" ]; then
+              for f in "$artifact_dir"/server/*; do
+                [ -e "$f" ] && cp "$f" "test-coverage/raw/server/${artifact_name}-$(basename "$f")"
+              done
+            fi
+            if [ -d "$artifact_dir/client" ]; then
+              for f in "$artifact_dir"/client/*; do
+                [ -e "$f" ] && cp "$f" "test-coverage/raw/client/${artifact_name}-$(basename "$f")"
+              done
+            fi
+          done
+
+      - name: Merge and report server coverage
+        continue-on-error: true
+        run: test/coverage/merge.sh server test-coverage/raw/server "${{ github.workspace }}/src/server" test-coverage | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Merge and report client coverage
+        continue-on-error: true
+        run: test/coverage/merge.sh client test-coverage/raw/client "${{ github.workspace }}/src/client" test-coverage | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged coverage reports
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: |
+            test-coverage/coverage-server.html
+            test-coverage/coverage-client.html

@@ -1,0 +1,37 @@
+services:
+  go-fdo-server:
+    build:
+      context: ${server_src_dir}
+      dockerfile: ${coverage_dockerfile_server}
+      args:
+        GOFLAGS: "-cover -covermode=atomic"
+
+  manufacturer:
+    environment:
+      GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
+    volumes:
+      - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
+
+  rendezvous:
+    environment:
+      GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
+    volumes:
+      - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
+
+  owner:
+    environment:
+      GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
+    volumes:
+      - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
+
+  # Not every server test defines 'new_owner' (only resale/ov-verification
+  # do). Docker Compose validates the whole merged config up front and
+  # errors on a service with neither 'image' nor 'build' — so this entry
+  # must carry the same image the tests that DO define new_owner already
+  # use, even for tests where new_owner is otherwise unreferenced.
+  new_owner:
+    image: go-fdo-server
+    environment:
+      GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
+    volumes:
+      - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z

@@ -112,6 +112,34 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+coverage_enabled() {
+  [[ "${COVERAGE_ENABLED:-0}" = "1" ]]
+}
+
+if coverage_enabled; then
+  : "${COVERAGE_ROOT:?COVERAGE_ROOT must be set when COVERAGE_ENABLED=1}"
+fi
+
+coverage_goflags() {
+  if coverage_enabled; then
+    echo "-cover -covermode=atomic"
+  fi
+  return 0
+}
+
+server_gocoverdir="${COVERAGE_ROOT:+${COVERAGE_ROOT}/raw/server}"
+client_gocoverdir="${COVERAGE_ROOT:+${COVERAGE_ROOT}/raw/client}"
+
+# Coverage instrumentation adds real per-invocation overhead (an extra
+# bind-mounted volume, extra I/O writing coverage data on exit, plus a
+# from-source image build per test), on top of the legitimate multi-minute
+# TO1 retry backoff go-fdo-client already performs when TO0 registration
+# hasn't propagated yet. Give coverage runs a larger budget so that
+# overhead doesn't turn a legitimate retry into a hard timeout.
+if coverage_enabled; then
+  client_timeout="600s"
+fi
+
 log() {
   echo -ne "$@" >&2
 }
@@ -265,10 +293,14 @@ wait_for_services_ready() {
 run_go_fdo_client() {
   mkdir -p "${credentials_dir}"
   cd "${credentials_dir}"
+  if coverage_enabled; then
+    mkdir -p "${client_gocoverdir}"
+  fi
   # If the command times out, the return code is 124 (see: man timeout)
   # If the command finishes before the timeout, the return code comes from 'go-fdo-client'
   local exit_code=0
-  timeout "${client_timeout}" "${bin_dir}/go-fdo-client" "$@" || exit_code=$?
+  GOCOVERDIR="${client_gocoverdir}" \
+    timeout "${client_timeout}" "${bin_dir}/go-fdo-client" "$@" || exit_code=$?
   if [[ ${exit_code} -ne 0 ]]; then
     log_warn "'go-fdo-client' exited with '${exit_code}' (124 -> timeout):\n  - go-fdo-client $*"
   fi
@@ -327,7 +359,11 @@ run_go_fdo_server() {
   shift 6
   mkdir -p "$(dirname "${log}")"
   mkdir -p "$(dirname "${pid_file}")"
-  nohup "${bin_dir}/go-fdo-server" "${role}" "${address_port}" --db-type "${db_type}" --db-dsn "${db_dsn}" --log-level=debug "${@}" &>"${log}" &
+  if coverage_enabled; then
+    mkdir -p "${server_gocoverdir}"
+  fi
+  GOCOVERDIR="${server_gocoverdir}" \
+    nohup "${bin_dir}/go-fdo-server" "${role}" "${address_port}" --db-type "${db_type}" --db-dsn "${db_dsn}" --log-level=debug "${@}" &>"${log}" &
   echo -n $! >"${pid_file}"
 }
 
@@ -435,7 +471,10 @@ install_client() {
   fetch_client_repo
   log_info "Building client from local path: ${client_src_dir}"
   pushd "${client_src_dir}" >/dev/null
-  make && install -m 755 go-fdo-client "${bin_dir}" && rm -f go-fdo-client
+  # NOTE: intentionally 'make build', not plain 'make' -- upstream's default goal is
+  # 'all: build test', so this deliberately skips re-running upstream's own unit tests
+  # here (redundant for e2e jobs), not an accidental behavior change.
+  make build GOFLAGS="$(coverage_goflags)" && install -m 755 go-fdo-client "${bin_dir}" && rm -f go-fdo-client
   popd >/dev/null
 }
 
@@ -458,7 +497,10 @@ install_server() {
   fetch_server_repo
   log_info "Building server from local path: ${server_src_dir}"
   pushd "${server_src_dir}" >/dev/null
-  make && install -m 755 go-fdo-server "${bin_dir}" && rm -f go-fdo-server
+  # NOTE: intentionally 'make build', not plain 'make' -- upstream's default goal is
+  # 'all: build test', so this deliberately skips re-running upstream's own unit tests
+  # here (redundant for e2e jobs), not an accidental behavior change.
+  make build GOFLAGS="$(coverage_goflags)" && install -m 755 go-fdo-server "${bin_dir}" && rm -f go-fdo-server
   popd >/dev/null
 }
 
