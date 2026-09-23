@@ -10,18 +10,21 @@ services:
     environment:
       GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
     volumes:
+      - ${base_dir:-./workdir}:${container_working_dir:-/workdir}:z
       - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
 
   rendezvous:
     environment:
       GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
     volumes:
+      - ${base_dir:-./workdir}:${container_working_dir:-/workdir}:z
       - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
 
   owner:
     environment:
       GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
     volumes:
+      - ${base_dir:-./workdir}:${container_working_dir:-/workdir}:z
       - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
 
   # Not every server test defines 'new_owner' (only resale/ov-verification
@@ -34,4 +37,5 @@ services:
     environment:
       GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
     volumes:
+      - ${base_dir:-./workdir}:${container_working_dir:-/workdir}:z
       - ${server_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
