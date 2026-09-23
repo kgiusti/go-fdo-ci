@@ -8,5 +8,4 @@ services:
     environment:
       GOCOVERDIR: ${container_working_dir:-/workdir}/coverage
     volumes:
-      - ${base_dir:-./workdir}:${container_working_dir:-/workdir}
       - ${client_coverage_dir}:${container_working_dir:-/workdir}/coverage:z
